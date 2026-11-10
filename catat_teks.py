@@ -15,20 +15,16 @@ PROMPT_TEKS = Path(__file__).with_name("prompt_teks.txt")
 BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
          "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
-# Nama di kanan harus PERSIS sama dengan pilihan dropdown Bank di Google Sheets.
-BANK_ALIAS = {
-    "seabank": "Seabank",
-    "jago Dida" : "Pocket Jago Dida",
-    "mandiri": "Mandiri Dida",
-    "jago saving" : "Jago -  Atha Dida Saving",
-    "seabank Atha" : "Seabank Atha",
-    "bca": "BCA Atha",
-    "anjay": "Pocket Jago ANJAYY2K",
-    "cash": "Cash",
-    "Shopeepay Atha": "Shopeepay Atha",
-    "shopeepay Dida": "Shopeepay Dida",
-    "gopay simpanan Dida": "Gopay Simpanan Dida"
-    }
+def muat_bank_alias():
+    """Baca alias bank dari bank_alias.json (pribadi, tidak masuk git).
+    Kalau belum ada, pakai bank_alias.example.json. Isinya {"alias yang diketik": "nama persis di dropdown"}."""
+    folder = Path(__file__).parent
+    for nama in ("bank_alias.json", "bank_alias.example.json"):
+        jalur = folder / nama
+        if jalur.exists():
+            return json.loads(jalur.read_text(encoding="utf-8"))
+    raise SystemExit("bank_alias.json belum ada. Salin bank_alias.example.json menjadi bank_alias.json lalu sesuaikan.")
+
 
 NAMA_BULAN = {
     "januari": 1, "jan": 1, "februari": 2, "feb": 2, "maret": 3, "mar": 3,
@@ -44,7 +40,18 @@ def _daftar(kata):
     return "|".join(re.escape(k) for k in sorted(kata, key=len, reverse=True))
 
 
-POLA_BANK = re.compile(rf"\b({_daftar(BANK_ALIAS)})\b", re.I)
+def pasang_bank_alias(alias):
+    """Pakai daftar alias bank ini. Pencarian tidak peduli huruf besar atau kecil.
+    Juga dipakai tes supaya tidak bergantung pada bank_alias.json pribadi."""
+    global BANK_ALIAS, BANK_LOOKUP, POLA_BANK
+    BANK_ALIAS = alias
+    BANK_LOOKUP = {k.lower(): v for k, v in alias.items()}
+    POLA_BANK = re.compile(rf"\b({_daftar(BANK_LOOKUP)})\b", re.I)
+
+
+pasang_bank_alias(muat_bank_alias())
+
+
 POLA_KEMARIN_LUSA = re.compile(r"\bkemarin lusa\b", re.I)
 POLA_KEMARIN = re.compile(r"\bkemarin\b", re.I)
 POLA_HARI_INI = re.compile(r"\bhari ini\b", re.I)
@@ -89,7 +96,7 @@ def tanya(model, pesan, suhu, label, format=None, think=None):
     return response.message.content
 
 
-# ---------- bagian Python murni: semua yang bisa dicari dengan aturan pasti ----------
+# ===== bagian Python murni: semua yang bisa dicari dengan aturan pasti =====
 
 def rapikan(teks):
     return re.sub(r"\s+", " ", teks).strip(" ,.:-")
@@ -134,7 +141,7 @@ def cari_bank(teks):
     m = POLA_BANK.search(teks)
     if not m:
         return None, teks
-    return BANK_ALIAS[m.group(1)], teks[:m.start()] + " " + teks[m.end():]
+    return BANK_LOOKUP[m.group(1).lower()], teks[:m.start()] + " " + teks[m.end():]
 
 
 def baca_nominal(angka, satuan, ada_rp):
@@ -204,7 +211,7 @@ def urai_pesan(pesan, tanggal_pesan=None):
     return item, catatan
 
 
-# ---------- bagian model: hanya menilai kategori dan merapikan keterangan ----------
+# ===== bagian model: hanya menilai kategori dan merapikan keterangan =====
 
 def tentukan_kategori(daftar_keterangan):
     """Gemma 4 menerima daftar bernomor tanpa nominal, jadi tidak bisa mengubah angka."""
@@ -245,9 +252,12 @@ def proses_pesan(pesan, tanggal_pesan=None):
     return baris, catatan
 
 
-# ---------- tes tanpa model: python catat_teks.py tes ----------
+# ===== tes tanpa model: python catat_teks.py tes =====
 
 def jalankan_tes():
+    alias_asli = BANK_ALIAS
+    pasang_bank_alias({"seabank": "Seabank Atha", "bca": "BCA Atha", "cash": "Cash",
+                       "seabank dida": "Seabank Dida", "jago saving": "Jago Saving"})
     hari_ini = date(2026, 11, 10)
     kasus = [
         # (pesan, tanggal pesan, [(nominal, bank, tanggal, keterangan), ...])
@@ -284,6 +294,10 @@ def jalankan_tes():
         ("sewa 1,5jt, kopi 20rb, bca", hari_ini, [
             (1500000, "BCA Atha", date(2026, 11, 10), "sewa"),
             (20000, "BCA Atha", date(2026, 11, 10), "kopi")]),
+        ("kopi 20rb BCA", hari_ini, [(20000, "BCA Atha", date(2026, 11, 10), "kopi")]),
+        ("kopi 20rb Seabank Dida", hari_ini, [(20000, "Seabank Dida", date(2026, 11, 10), "kopi")]),
+        ("kopi 20rb seabank", hari_ini, [(20000, "Seabank Atha", date(2026, 11, 10), "kopi")]),
+        ("kopi 20rb JAGO SAVING", hari_ini, [(20000, "Jago Saving", date(2026, 11, 10), "kopi")]),
         ("kopi", hari_ini, []),
         ("31/02 kopi 20rb", hari_ini, [(20000, None, date(2026, 11, 10), "31/02 kopi")]),
     ]
@@ -298,6 +312,7 @@ def jalankan_tes():
             print("GAGAL ", repr(pesan))
             print("   harapan:", harapan)
             print("   hasil  :", hasil)
+    pasang_bank_alias(alias_asli)
     print(f"\n{len(kasus) - gagal} dari {len(kasus)} lolos")
 
 
