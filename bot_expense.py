@@ -1,14 +1,3 @@
-"""Bot Telegram pencatat pengeluaran.
-
-Pesan teks seperti "kopi 20rb seabank" diubah menjadi baris pengeluaran oleh
-catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke CSV.
-
-Konfigurasi lewat environment variable atau file .env (lihat .env.example):
-    TELEGRAM_TOKEN    token dari BotFather (wajib)
-    ALLOWED_USER_ID   ID Telegram satu-satunya pengguna yang dilayani.
-                      Kalau kosong, bot berjalan dalam mode setup yang hanya
-                      menyebutkan ID pengirim pesan.
-"""
 import asyncio
 import csv
 import logging
@@ -17,7 +6,7 @@ from datetime import timedelta, timezone
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -42,6 +31,8 @@ WIB = timezone(timedelta(hours=7))  # Jakarta tidak memakai daylight saving, sel
 BANK_PILIHAN = list(dict.fromkeys(BANK_ALIAS.values()))  # nama unik, urutan tetap
 MAKS_PANJANG_PESAN = 500  # pesan lebih panjang ditolak sebelum membuang waktu model
 MAKS_PENDING = 50  # hasil yang menunggu konfirmasi, yang paling lama dibuang bila melebihi ini
+TIMEOUT_TELEGRAM = 20  # detik. Bawaan library hanya 5 detik untuk connect, terlalu ketat untuk koneksi yang lambat
+JUMLAH_COBA = 3  # percobaan untuk panggilan Telegram yang gagal karena jaringan
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -75,17 +66,41 @@ def format_hasil(baris, catatan):
     return "\n".join(teks)
 
 
-def buat_keyboard(kunci, baris):
+def buat_keyboard(kunci, baris, pilih_bank=False):
+    """Susun tombol. Pemilih bank tampil kalau ada item tanpa bank, atau setelah menekan Ganti bank."""
     bank_lengkap = all(b["Bank"] for b in baris)
-    awalan = "Semua: " if bank_lengkap else ""
-    baris_bank = [
-        InlineKeyboardButton(awalan + nama, callback_data=f"B|{kunci}|{i}")
-        for i, nama in enumerate(BANK_PILIHAN)
-    ]
-    baris_aksi = [InlineKeyboardButton("Batal", callback_data=f"X|{kunci}")]
-    if bank_lengkap:  # Simpan baru muncul setelah semua baris punya bank
-        baris_aksi.insert(0, InlineKeyboardButton("Simpan", callback_data=f"S|{kunci}"))
-    return InlineKeyboardMarkup([baris_bank, baris_aksi])
+    if pilih_bank or not bank_lengkap:
+        tombol_bank = [
+            InlineKeyboardButton(nama, callback_data=f"B|{kunci}|{i}")
+            for i, nama in enumerate(BANK_PILIHAN)
+        ]
+        susunan = [tombol_bank[i:i + 2] for i in range(0, len(tombol_bank), 2)]  # dua per baris, nama bank panjang
+        susunan.append([InlineKeyboardButton("Batal", callback_data=f"X|{kunci}")])
+        if bank_lengkap:  # sedang mengganti bank, sediakan jalan kembali
+            susunan[-1].insert(0, InlineKeyboardButton("Kembali", callback_data=f"K|{kunci}"))
+        return InlineKeyboardMarkup(susunan)
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("Simpan", callback_data=f"S|{kunci}"),
+        InlineKeyboardButton("Ganti bank", callback_data=f"G|{kunci}"),
+        InlineKeyboardButton("Batal", callback_data=f"X|{kunci}"),
+    ]])
+
+
+async def coba_ulang(fungsi, *args, **kwargs):
+    """Jalankan panggilan edit ke Telegram, ulangi kalau jaringan timeout.
+    Hanya untuk edit, karena mengulang edit aman (hasilnya sama), mengulang kirim pesan bisa dobel."""
+    for percobaan in range(1, JUMLAH_COBA + 1):
+        try:
+            return await fungsi(*args, **kwargs)
+        except BadRequest as e:  # harus sebelum NetworkError, BadRequest adalah turunannya
+            if "not modified" in str(e).lower():  # percobaan sebelumnya ternyata sudah masuk
+                return None
+            raise
+        except NetworkError:  # termasuk TimedOut
+            if percobaan == JUMLAH_COBA:
+                raise
+            log.warning("Telegram tidak terjangkau, mencoba lagi (%d/%d)", percobaan, JUMLAH_COBA)
+            await asyncio.sleep(2 * percobaan)
 
 
 def simpan_csv(baris):
@@ -140,18 +155,24 @@ async def terima_teks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # satu per satu: Ollama di laptop tidak kuat melayani beberapa permintaan bersamaan
         async with data_bot["lock"]:
             baris, catatan = await asyncio.to_thread(proses_pesan, pesan.text, tanggal_pesan)
-    except Exception:
+    except Exception as e:
         log.exception("gagal memproses pesan")
-        await status.edit_text("Gagal memproses pesan. Pastikan Ollama sedang berjalan, lalu coba lagi.")
+        await coba_ulang(
+            status.edit_text,
+            f"Gagal memproses pesan ({type(e).__name__}). Pastikan Ollama berjalan, atau lihat log di terminal.",
+        )
         return
     if not baris:
-        await status.edit_text(
-            "Tidak ada nominal yang terbaca. Contoh: kopi 20rb seabank\n" + "\n".join(catatan)
+        await coba_ulang(
+            status.edit_text,
+            "Tidak ada nominal yang terbaca. Contoh: kopi 20rb seabank\n" + "\n".join(catatan),
         )
         return
     log.info("pesan diproses: %d item", len(baris))  # isi pesan sengaja tidak dicatat
     kunci = simpan_pending(data_bot, baris, catatan)
-    await status.edit_text(format_hasil(baris, catatan), reply_markup=buat_keyboard(kunci, baris))
+    await coba_ulang(
+        status.edit_text, format_hasil(baris, catatan), reply_markup=buat_keyboard(kunci, baris)
+    )
 
 
 async def terima_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -169,41 +190,49 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pending = data_bot["pending"]
     data = pending.get(kunci)
     if data is None:
-        await query.edit_message_text(
+        await coba_ulang(
+            query.edit_message_text,
             "Data ini sudah diproses atau kedaluwarsa (bot mungkin sempat dijalankan ulang). "
-            "Kirim ulang pesannya."
+            "Kirim ulang pesannya.",
         )
         return
-    try:
-        if aksi == "B":
-            nama = BANK_PILIHAN[int(bagian[2])]
-            for b in data["baris"]:
-                b["Bank"] = nama
-            await query.edit_message_text(
-                format_hasil(data["baris"], data["catatan"]),
-                reply_markup=buat_keyboard(kunci, data["baris"]),
+    if aksi == "B":  # pilih bank untuk semua item
+        nama = BANK_PILIHAN[int(bagian[2])]
+        for b in data["baris"]:
+            b["Bank"] = nama
+        await coba_ulang(
+            query.edit_message_text,
+            format_hasil(data["baris"], data["catatan"]),
+            reply_markup=buat_keyboard(kunci, data["baris"]),
+        )
+    elif aksi == "G":  # tampilkan pemilih bank
+        await coba_ulang(
+            query.edit_message_reply_markup,
+            reply_markup=buat_keyboard(kunci, data["baris"], pilih_bank=True),
+        )
+    elif aksi == "K":  # kembali dari pemilih bank
+        await coba_ulang(
+            query.edit_message_reply_markup, reply_markup=buat_keyboard(kunci, data["baris"])
+        )
+    elif aksi == "S":
+        try:
+            simpan_csv(data["baris"])
+        except OSError:
+            log.exception("gagal menulis %s", CSV_PATH.name)
+            await query.message.reply_text(
+                f"Gagal menyimpan. Pastikan {CSV_PATH.name} tidak sedang dibuka di aplikasi lain, "
+                "lalu tekan Simpan lagi."
             )
-        elif aksi == "S":
-            try:
-                simpan_csv(data["baris"])
-            except OSError:
-                log.exception("gagal menulis %s", CSV_PATH.name)
-                await query.answer(
-                    f"Gagal menyimpan. Pastikan {CSV_PATH.name} tidak sedang dibuka di aplikasi lain.",
-                    show_alert=True,
-                )
-                return  # data tetap menunggu, tombol Simpan bisa ditekan lagi
-            pending.pop(kunci, None)  # tidak ada await di antara simpan dan pop, jadi tidak bisa tersimpan dua kali
-            await query.edit_message_text(
-                f"Tersimpan {len(data['baris'])} baris ke {CSV_PATH.name}.\n"
-                + format_hasil(data["baris"], [])
-            )
-        elif aksi == "X":
-            pending.pop(kunci, None)
-            await query.edit_message_text("Dibatalkan, tidak ada yang disimpan.")
-    except BadRequest as e:
-        if "not modified" not in str(e).lower():  # menekan bank yang sama dua kali itu wajar
-            raise
+            return  # data tetap menunggu, tombol Simpan bisa ditekan lagi
+        pending.pop(kunci, None)  # tidak ada await di antara simpan dan pop, jadi tidak bisa tersimpan dua kali
+        await coba_ulang(
+            query.edit_message_text,
+            f"Tersimpan {len(data['baris'])} baris ke {CSV_PATH.name}.\n"
+            + format_hasil(data["baris"], []),
+        )
+    elif aksi == "X":
+        pending.pop(kunci, None)
+        await coba_ulang(query.edit_message_text, "Dibatalkan, tidak ada yang disimpan.")
 
 
 async def tangani_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -220,7 +249,17 @@ def main() -> None:
         )
     boleh = id_diizinkan()
     # concurrent_updates: tombol tetap responsif selagi model bekerja, lock yang menjaga antrean
-    app = Application.builder().token(token).concurrent_updates(True).build()
+    app = (
+        Application.builder()
+        .token(token)
+        .concurrent_updates(True)
+        .connect_timeout(TIMEOUT_TELEGRAM)
+        .read_timeout(TIMEOUT_TELEGRAM)
+        .write_timeout(TIMEOUT_TELEGRAM)
+        .pool_timeout(TIMEOUT_TELEGRAM)
+        .get_updates_connect_timeout(TIMEOUT_TELEGRAM)
+        .build()
+    )
     app.bot_data.update(lock=asyncio.Lock(), pending={}, n=0, boleh=boleh)
     app.add_error_handler(tangani_error)
 
