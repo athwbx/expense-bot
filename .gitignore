@@ -6,3 +6,4 @@ __pycache__/
 service_account*.json
 pengeluaran.csv
 struk_tes/
+bank_alias.json
