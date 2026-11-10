@@ -52,7 +52,7 @@ Kategori ditentukan model, jadi bisa meleset. Kategori yang tidak dikenal merek 
 ## Format pesan
 
 - **Nominal:** `27rb`, `27k`, `27.000`, `27000`, `rp27.000`, `1,5jt`. Angka kecil tanpa satuan (misalnya jumlah porsi) diabaikan, kecuali ditulis dengan `Rp`.
-- **Bank:** dikenali dari alias di `BANK_ALIAS` (`catat_teks.py`). Kalau tidak disebut, bot menampilkan tombol pilihan bank.
+- **Bank:** dikenali dari alias di `bank_alias.json` (huruf besar atau kecil tidak berpengaruh). Kalau tidak disebut, bot menampilkan tombol pilihan bank.
 - **Tanggal:** `hari ini`, `kemarin`, `kemarin lusa`, `6 agustus`, `6/8` (hari/bulan), atau `6 agustus 2025`. Tanpa tanggal, dipakai tanggal pesan (zona waktu UTC+7).
 - **Banyak item:** pisahkan dengan koma, titik koma, atau baris baru. Bank atau tanggal yang disebut sekali berlaku untuk semua item di pesan itu, kecuali item punya sendiri.
 
@@ -76,9 +76,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ollama pull gemma4:e4b-it-qat
 Copy-Item .env.example .env
+Copy-Item bank_alias.example.json bank_alias.json
 ```
 
-Isi `.env`:
+Sesuaikan `bank_alias.json` dengan bank atau dompet digital milikmu (lihat bagian Konfigurasi), lalu isi `.env`:
 
 - `TELEGRAM_TOKEN`: token dari BotFather. Jangan dibagikan, kalau bocor cabut dengan `/revoke` di BotFather.
 - `ALLOWED_USER_ID`: ID Telegram yang boleh memakai bot. Kalau belum tahu, kosongkan dulu, jalankan bot, kirim `/start`, lalu salin ID yang dibalas bot ke `.env` dan jalankan ulang.
@@ -98,12 +99,12 @@ python catat_teks.py tes
 python catat_teks.py "kopi 20rb seabank"
 ```
 
-Perintah pertama menjalankan 22 kasus untuk pembacaan nominal, bank, dan tanggal, tanpa memanggil model. Perintah kedua memanggil model dan mencetak hasilnya.
+Perintah pertama menjalankan 26 kasus untuk pembacaan nominal, bank, dan tanggal, tanpa memanggil model. Perintah kedua memanggil model dan mencetak hasilnya.
 
 ## Konfigurasi
 
 - **Kategori:** daftar dan contohnya ada di `prompt_teks.txt`. Daftar yang sama juga tertulis di kelas `ItemTeks` di `catat_teks.py`, jadi ubah keduanya bersamaan.
-- **Bank:** `BANK_ALIAS` di `catat_teks.py`. Nama di sisi kanan harus sama persis dengan pilihan yang kamu pakai di spreadsheet.
+- **Bank:** `bank_alias.json`, berisi pasangan `"alias yang diketik": "nama bank"`. Nama di sisi kanan harus sama persis dengan pilihan yang kamu pakai di spreadsheet. Alias yang lebih panjang didahulukan, jadi `seabank atha` menang atas `seabank`. Berkas ini bersifat pribadi dan masuk `.gitignore`. Yang ikut repo hanya `bank_alias.example.json`. Bot harus dijalankan ulang setelah berkas ini diubah.
 
 ## Performa
 
@@ -114,12 +115,13 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Semua pemrosesan berjalan di laptop sendiri, tidak ada layanan AI berbayar atau cloud.
 - Bot hanya merespons satu ID Telegram, pesan dari orang lain diabaikan.
 - Isi pesan tidak ditulis ke log.
-- `.env`, `pengeluaran.csv`, dan kunci layanan Google masuk `.gitignore`.
+- `.env`, `bank_alias.json`, `pengeluaran.csv`, dan kunci layanan Google masuk `.gitignore`.
 
 ## Batasan yang diketahui
 
 - Hasil yang menunggu konfirmasi disimpan di memori. Kalau bot dijalankan ulang, pesan lama kedaluwarsa dan perlu dikirim ulang.
 - Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di CSV.
+- Panggilan ke Telegram yang timeout diulang sampai 3 kali. Kalau koneksi terus gagal, hasil tidak muncul di chat dan pesan perlu dikirim ulang.
 - Satu pesan diproses satu per satu karena keterbatasan laptop.
 - Hanya satu pengguna yang didukung.
 
@@ -128,7 +130,7 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Penyimpanan ke Google Sheets lewat service account
 - Foto struk dengan GLM-OCR, dengan angka dibaca Python, bukan model
 - Perintah `/undo`, pencegahan duplikat, dan ringkasan harian
-- Memindahkan nama bank dan kategori ke berkas konfigurasi
+- Memindahkan daftar kategori ke berkas konfigurasi
 
 ## Eksperimen foto struk
 
