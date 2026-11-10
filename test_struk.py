@@ -47,11 +47,11 @@ def format_tanggal(teks: str) -> str:
         return teks
 
 
-def tanya(pesan, suhu, label, format=None):
+def tanya(model,pesan, suhu, label, format=None):
     """Panggil Ollama sekali, lalu catat lama waktu dan jumlah token keluar."""
     mulai = time.perf_counter()
     response = chat(
-        model=MODEL,
+        model=model,
         messages=pesan,
         format=format,
         think=False,

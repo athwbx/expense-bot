@@ -17,12 +17,18 @@ BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
 
 # Nama di kanan harus PERSIS sama dengan pilihan dropdown Bank di Google Sheets.
 BANK_ALIAS = {
-    "seabank": "Seabank Atha",
-    "sea bank": "Seabank Atha",
+    "seabank": "Seabank",
+    "jago Dida" : "Pocket Jago Dida",
+    "mandiri": "Mandiri Dida",
+    "jago saving" : "Jago -  Atha Dida Saving",
+    "seabank Atha" : "Seabank Atha",
     "bca": "BCA Atha",
+    "anjay": "Pocket Jago ANJAYY2K",
     "cash": "Cash",
-    "tunai": "Cash",
-}
+    "Shopeepay Atha": "Shopeepay Atha",
+    "shopeepay Dida": "Shopeepay Dida",
+    "gopay simpanan Dida": "Gopay Simpanan Dida"
+    }
 
 NAMA_BULAN = {
     "januari": 1, "jan": 1, "februari": 2, "feb": 2, "maret": 3, "mar": 3,
@@ -128,7 +134,7 @@ def cari_bank(teks):
     m = POLA_BANK.search(teks)
     if not m:
         return None, teks
-    return BANK_ALIAS[m.group(1).lower()], teks[:m.start()] + " " + teks[m.end():]
+    return BANK_ALIAS[m.group(1)], teks[:m.start()] + " " + teks[m.end():]
 
 
 def baca_nominal(angka, satuan, ada_rp):
