@@ -5,13 +5,14 @@ catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke Google She
 
 Konfigurasi lewat environment variable atau file .env (lihat .env.example):
     TELEGRAM_TOKEN    token dari BotFather (wajib)
-    ALLOWED_USER_ID   ID Telegram satu-satunya pengguna yang dilayani.
+    ALLOWED_USER_ID   ID Telegram pengguna yang dilayani. Boleh lebih dari satu, pisahkan dengan koma.
                       Kalau kosong, bot berjalan dalam mode setup yang hanya
                       menyebutkan ID pengirim pesan.
 """
 import asyncio
 import logging
 import os
+import re
 from datetime import timedelta, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -50,9 +51,13 @@ log = logging.getLogger("expense-bot")
 
 
 def id_diizinkan():
-    """ID Telegram yang boleh memakai bot, atau None kalau belum diatur."""
-    nilai = os.environ.get("ALLOWED_USER_ID", "").strip()
-    return int(nilai) if nilai.isdigit() else None
+    """Himpunan ID Telegram yang boleh memakai bot, dari ALLOWED_USER_ID (pisahkan dengan koma).
+    Kosong kalau belum diatur. ValueError kalau ada nilai yang bukan angka, supaya salah ketik tidak diam-diam menolak seseorang."""
+    potongan = [p for p in re.split(r"[,;\s]+", os.environ.get("ALLOWED_USER_ID", "").strip()) if p]
+    salah = [p for p in potongan if not p.isdigit()]
+    if salah:
+        raise ValueError(f"ALLOWED_USER_ID memuat nilai yang bukan angka: {', '.join(salah)}")
+    return frozenset(int(p) for p in potongan)
 
 
 def rupiah(n):
@@ -111,12 +116,13 @@ async def coba_ulang(fungsi, *args, **kwargs):
             await asyncio.sleep(2 * percobaan)
 
 
-def simpan_pending(data_bot, baris, catatan):
-    """Simpan hasil di memori sampai dikonfirmasi. Kembalikan kunci untuk tombol."""
+def simpan_pending(data_bot, baris, catatan, pemilik):
+    """Simpan hasil di memori sampai dikonfirmasi. Hanya pemilik (pengirim pesan) yang boleh menekan tombolnya.
+    Kembalikan kunci untuk tombol."""
     data_bot["n"] += 1
     kunci = str(data_bot["n"])
     pending = data_bot["pending"]
-    pending[kunci] = {"baris": baris, "catatan": catatan}
+    pending[kunci] = {"baris": baris, "catatan": catatan, "pemilik": pemilik}
     while len(pending) > MAKS_PENDING:  # dict menjaga urutan masuk, jadi yang pertama paling lama
         pending.pop(next(iter(pending)))
     return kunci
@@ -127,12 +133,12 @@ async def kenalan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     boleh = context.application.bot_data["boleh"]
     user = update.effective_user
     pesan = update.effective_message
-    if boleh is None:
+    if not boleh:
         await pesan.reply_text(
             f"Mode setup. ID Telegram kamu: {user.id}\n"
-            "Isi ALLOWED_USER_ID di file .env dengan angka ini, lalu jalankan ulang bot."
+            "Tambahkan angka ini ke ALLOWED_USER_ID di file .env (pisahkan dengan koma kalau lebih dari satu orang), lalu jalankan ulang bot."
         )
-    elif user.id == boleh:
+    elif user.id in boleh:
         await pesan.reply_text(
             "Siap. Kirim pengeluaran, contoh:\nkopi 20rb seabank\n"
             "atau beberapa sekaligus: bensin 30k, ketoprak 40k kemarin"
@@ -165,7 +171,7 @@ async def terima_teks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     log.info("pesan diproses: %d item", len(baris))  # isi pesan sengaja tidak dicatat
-    kunci = simpan_pending(data_bot, baris, catatan)
+    kunci = simpan_pending(data_bot, baris, catatan, pesan.from_user.id)
     await coba_ulang(
         status.edit_text, format_hasil(baris, catatan), reply_markup=buat_keyboard(kunci, baris)
     )
@@ -182,7 +188,7 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except NetworkError:  # tombol lama yang baru ditekan setelah jaringan pulih, jawabannya sudah kedaluwarsa
         pass
     data_bot = context.application.bot_data
-    if query.from_user.id != data_bot["boleh"]:
+    if query.from_user.id not in data_bot["boleh"]:
         return
     bagian = query.data.split("|")
     aksi, kunci = bagian[0], bagian[1]
@@ -194,6 +200,8 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Data ini sudah diproses atau kedaluwarsa (bot mungkin sempat dijalankan ulang). "
             "Kirim ulang pesannya.",
         )
+        return
+    if data["pemilik"] != query.from_user.id:  # tombol hasil pesan orang lain, abaikan
         return
     if aksi == "B":  # pilih bank untuk semua item
         nama = BANK_PILIHAN[int(bagian[2])]
@@ -252,7 +260,10 @@ def main() -> None:
             "TELEGRAM_TOKEN belum diatur. Salin .env.example menjadi .env, "
             "isi nilainya, lalu jalankan lagi."
         )
-    boleh = id_diizinkan()
+    try:
+        boleh = id_diizinkan()
+    except ValueError as e:
+        raise SystemExit(str(e))
     # concurrent_updates: tombol tetap responsif selagi model bekerja, lock yang menjaga antrean
     app = (
         Application.builder()
@@ -269,12 +280,12 @@ def main() -> None:
     app.add_error_handler(tangani_error)
 
     app.add_handler(CommandHandler("start", kenalan))
-    if boleh is None:
+    if not boleh:
         log.warning("ALLOWED_USER_ID belum diatur, bot berjalan dalam mode setup.")
         app.add_handler(MessageHandler(filters.ALL, kenalan))
     else:
         # UpdateType.MESSAGE: pesan yang diedit tidak diproses ulang
-        hanya_aku = filters.User(user_id=boleh) & filters.UpdateType.MESSAGE
+        hanya_aku = filters.User(user_id=boleh) & filters.UpdateType.MESSAGE  # semua ID yang diizinkan
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & hanya_aku, terima_teks))
         app.add_handler(MessageHandler(filters.PHOTO & hanya_aku, terima_foto))
         app.add_handler(CallbackQueryHandler(tombol))

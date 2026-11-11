@@ -20,7 +20,7 @@ Prinsip utamanya: **hal yang bisa dicari dengan aturan pasti dikerjakan Python, 
 Pesan Telegram
       |
       v
-bot_expense.py      menerima pesan, hanya melayani satu ID Telegram
+bot_expense.py      menerima pesan, hanya melayani ID Telegram yang diizinkan
       |
       v
 catat_teks.py       Python: baca nominal, bank, dan tanggal
@@ -84,7 +84,7 @@ Copy-Item bank_alias.example.json bank_alias.json
 Sesuaikan `bank_alias.json` dengan bank atau dompet digital milikmu (lihat bagian Konfigurasi), lalu isi `.env`:
 
 - `TELEGRAM_TOKEN`: token dari BotFather. Jangan dibagikan, kalau bocor cabut dengan `/revoke` di BotFather.
-- `ALLOWED_USER_ID`: ID Telegram yang boleh memakai bot. Kalau belum tahu, kosongkan dulu, jalankan bot, kirim `/start`, lalu salin ID yang dibalas bot ke `.env` dan jalankan ulang.
+- `ALLOWED_USER_ID`: ID Telegram yang boleh memakai bot. Boleh lebih dari satu, pisahkan dengan koma (`111111111,222222222`). Kalau belum tahu, kosongkan dulu, jalankan bot, minta tiap orang mengirim `/start` ke bot, lalu salin ID yang dibalas bot ke `.env` dan jalankan ulang.
 
 ## Menjalankan
 
@@ -126,7 +126,7 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 ## Privasi dan keamanan
 
 - Semua pemrosesan berjalan di laptop sendiri, tidak ada layanan AI berbayar atau cloud.
-- Bot hanya merespons satu ID Telegram, pesan dari orang lain diabaikan.
+- Bot hanya merespons ID Telegram yang diizinkan, pesan dari orang lain diabaikan. Tombol konfirmasi hanya bisa ditekan oleh pengirim pesannya sendiri.
 - Isi pesan tidak ditulis ke log.
 - `.env`, `bank_alias.json`, `pengeluaran.tsv`, dan kunci layanan Google masuk `.gitignore`.
 
@@ -136,7 +136,7 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di Sheets atau berkas TSV.
 - Panggilan ke Telegram yang timeout diulang sampai 3 kali. Kalau koneksi terus gagal, hasil tidak muncul di chat dan pesan perlu dikirim ulang.
 - Satu pesan diproses satu per satu karena keterbatasan laptop.
-- Hanya satu pengguna yang didukung.
+- Semua pengguna yang diizinkan menulis ke tempat penyimpanan yang sama, dan belum ada pencatatan siapa yang menulis.
 
 ## Rencana
 
