@@ -1,7 +1,7 @@
 """Bot Telegram pencatat pengeluaran.
 
 Pesan teks seperti "kopi 20rb seabank" diubah menjadi baris pengeluaran oleh
-catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke pengeluaran.tsv (dipisah tab, bisa ditempel ke Google Sheets).
+catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke Google Sheets, atau ke pengeluaran.tsv kalau Sheets belum diatur (lihat penyimpanan.py).
 
 Konfigurasi lewat environment variable atau file .env (lihat .env.example):
     TELEGRAM_TOKEN    token dari BotFather (wajib)
@@ -10,11 +10,9 @@ Konfigurasi lewat environment variable atau file .env (lihat .env.example):
                       menyebutkan ID pengirim pesan.
 """
 import asyncio
-import csv
 import logging
 import os
 from datetime import timedelta, timezone
-from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, NetworkError
@@ -28,6 +26,7 @@ from telegram.ext import (
 )
 
 from catat_teks import BANK_ALIAS, proses_pesan, tampil_tanggal
+from penyimpanan import DATA_PATH, simpan_baris, tujuan_aktif
 
 try:
     from dotenv import load_dotenv
@@ -36,8 +35,6 @@ try:
 except ImportError:  # python-dotenv bersifat opsional, environment variable biasa tetap dibaca
     pass
 
-DATA_PATH = Path(__file__).with_name("pengeluaran.tsv")  # dipisah tab: Google Sheets memecah kolom otomatis saat ditempel
-KOLOM = ["Date", "Bank", "Category", "Description", "Amount"]
 WIB = timezone(timedelta(hours=7))  # Jakarta tidak memakai daylight saving, selisih tetap cukup
 BANK_PILIHAN = list(dict.fromkeys(BANK_ALIAS.values()))  # nama unik, urutan tetap
 MAKS_PANJANG_PESAN = 500  # pesan lebih panjang ditolak sebelum membuang waktu model
@@ -112,18 +109,6 @@ async def coba_ulang(fungsi, *args, **kwargs):
                 raise
             log.warning("Telegram tidak terjangkau, mencoba lagi (%d/%d)", percobaan, JUMLAH_COBA)
             await asyncio.sleep(2 * percobaan)
-
-
-def simpan_data(baris):
-    """Tambahkan baris ke pengeluaran.tsv. Pemisah kolom adalah tab, tanggal ditulis ISO (yyyy-mm-dd)."""
-    if not DATA_PATH.exists():
-        with open(DATA_PATH, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f, delimiter="\t").writerow(KOLOM)
-    with open(DATA_PATH, "a", newline="", encoding="utf-8") as f:
-        tulis = csv.writer(f, delimiter="\t")
-        for b in baris:
-            tulis.writerow([b["Date"].isoformat(), b["Bank"], b["Category"] or "",
-                            b["Description"], b["Amount"]])
 
 
 def simpan_pending(data_bot, baris, catatan):
@@ -229,21 +214,24 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             query.edit_message_reply_markup, reply_markup=buat_keyboard(kunci, data["baris"])
         )
     elif aksi == "S":
+        if data.get("menyimpan"):  # Simpan ditekan lagi selagi penyimpanan pertama masih berjalan
+            return
+        data["menyimpan"] = True
         try:
-            simpan_data(data["baris"])
+            tujuan, peringatan = await asyncio.to_thread(simpan_baris, data["baris"])
         except OSError:
+            data["menyimpan"] = False
             log.exception("gagal menulis %s", DATA_PATH.name)
             await query.message.reply_text(
                 f"Gagal menyimpan. Pastikan {DATA_PATH.name} tidak sedang dibuka di aplikasi lain, "
                 "lalu tekan Simpan lagi."
             )
             return  # data tetap menunggu, tombol Simpan bisa ditekan lagi
-        pending.pop(kunci, None)  # tidak ada await di antara simpan dan pop, jadi tidak bisa tersimpan dua kali
-        await coba_ulang(
-            query.edit_message_text,
-            f"Tersimpan {len(data['baris'])} baris ke {DATA_PATH.name}.\n"
-            + format_hasil(data["baris"], []),
-        )
+        pending.pop(kunci, None)
+        teks = f"Tersimpan {len(data['baris'])} baris ke {tujuan}.\n"
+        if peringatan:
+            teks += f"Peringatan: {peringatan}\n"
+        await coba_ulang(query.edit_message_text, teks + format_hasil(data["baris"], []))
     elif aksi == "X":
         pending.pop(kunci, None)
         await coba_ulang(query.edit_message_text, "Dibatalkan, tidak ada yang disimpan.")
@@ -290,6 +278,7 @@ def main() -> None:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & hanya_aku, terima_teks))
         app.add_handler(MessageHandler(filters.PHOTO & hanya_aku, terima_foto))
         app.add_handler(CallbackQueryHandler(tombol))
+    log.info("Penyimpanan: %s", tujuan_aktif())
     log.info("Bot berjalan. Hentikan dengan Ctrl+C.")
     app.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
 
