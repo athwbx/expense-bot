@@ -1,3 +1,14 @@
+"""Bot Telegram pencatat pengeluaran.
+
+Pesan teks seperti "kopi 20rb seabank" diubah menjadi baris pengeluaran oleh
+catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke pengeluaran.tsv (dipisah tab, bisa ditempel ke Google Sheets).
+
+Konfigurasi lewat environment variable atau file .env (lihat .env.example):
+    TELEGRAM_TOKEN    token dari BotFather (wajib)
+    ALLOWED_USER_ID   ID Telegram satu-satunya pengguna yang dilayani.
+                      Kalau kosong, bot berjalan dalam mode setup yang hanya
+                      menyebutkan ID pengirim pesan.
+"""
 import asyncio
 import csv
 import logging
@@ -25,7 +36,7 @@ try:
 except ImportError:  # python-dotenv bersifat opsional, environment variable biasa tetap dibaca
     pass
 
-CSV_PATH = Path(__file__).with_name("pengeluaran.csv")
+DATA_PATH = Path(__file__).with_name("pengeluaran.tsv")  # dipisah tab: Google Sheets memecah kolom otomatis saat ditempel
 KOLOM = ["Date", "Bank", "Category", "Description", "Amount"]
 WIB = timezone(timedelta(hours=7))  # Jakarta tidak memakai daylight saving, selisih tetap cukup
 BANK_PILIHAN = list(dict.fromkeys(BANK_ALIAS.values()))  # nama unik, urutan tetap
@@ -103,13 +114,13 @@ async def coba_ulang(fungsi, *args, **kwargs):
             await asyncio.sleep(2 * percobaan)
 
 
-def simpan_csv(baris):
-    """Tambahkan baris ke pengeluaran.csv. Tanggal ditulis ISO (yyyy-mm-dd)."""
-    if not CSV_PATH.exists():
-        with open(CSV_PATH, "w", newline="", encoding="utf-8-sig") as f:
-            csv.writer(f).writerow(KOLOM)
-    with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
-        tulis = csv.writer(f)
+def simpan_data(baris):
+    """Tambahkan baris ke pengeluaran.tsv. Pemisah kolom adalah tab, tanggal ditulis ISO (yyyy-mm-dd)."""
+    if not DATA_PATH.exists():
+        with open(DATA_PATH, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f, delimiter="\t").writerow(KOLOM)
+    with open(DATA_PATH, "a", newline="", encoding="utf-8") as f:
+        tulis = csv.writer(f, delimiter="\t")
         for b in baris:
             tulis.writerow([b["Date"].isoformat(), b["Bank"], b["Category"] or "",
                             b["Description"], b["Amount"]])
@@ -181,7 +192,10 @@ async def terima_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()  # callback query harus selalu dijawab, sesuai dokumentasi resmi
+    try:
+        await query.answer()  # callback query harus dijawab, sesuai dokumentasi resmi
+    except NetworkError:  # tombol lama yang baru ditekan setelah jaringan pulih, jawabannya sudah kedaluwarsa
+        pass
     data_bot = context.application.bot_data
     if query.from_user.id != data_bot["boleh"]:
         return
@@ -216,18 +230,18 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     elif aksi == "S":
         try:
-            simpan_csv(data["baris"])
+            simpan_data(data["baris"])
         except OSError:
-            log.exception("gagal menulis %s", CSV_PATH.name)
+            log.exception("gagal menulis %s", DATA_PATH.name)
             await query.message.reply_text(
-                f"Gagal menyimpan. Pastikan {CSV_PATH.name} tidak sedang dibuka di aplikasi lain, "
+                f"Gagal menyimpan. Pastikan {DATA_PATH.name} tidak sedang dibuka di aplikasi lain, "
                 "lalu tekan Simpan lagi."
             )
             return  # data tetap menunggu, tombol Simpan bisa ditekan lagi
         pending.pop(kunci, None)  # tidak ada await di antara simpan dan pop, jadi tidak bisa tersimpan dua kali
         await coba_ulang(
             query.edit_message_text,
-            f"Tersimpan {len(data['baris'])} baris ke {CSV_PATH.name}.\n"
+            f"Tersimpan {len(data['baris'])} baris ke {DATA_PATH.name}.\n"
             + format_hasil(data["baris"], []),
         )
     elif aksi == "X":
@@ -237,6 +251,9 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def tangani_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Penangkap terakhir supaya error tak terduga tercatat dan tidak mematikan bot."""
+    if isinstance(context.error, NetworkError):  # library mengulang sendiri, cukup satu baris
+        log.warning("koneksi ke Telegram terganggu: %s", context.error)
+        return
     log.error("error tidak tertangani", exc_info=context.error)
 
 
