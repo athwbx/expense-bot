@@ -2,3 +2,4 @@ ollama
 pydantic
 python-telegram-bot
 python-dotenv
+gspread

@@ -8,8 +8,8 @@ Contoh pesan: `bensin 30k, ketoprak 40k kemarin`
 
 - Pesan teks ke baris pengeluaran: berfungsi, diuji di Windows.
 - Konfirmasi lewat tombol Telegram (pilih bank, Simpan, Batal): berfungsi.
-- Penyimpanan ke CSV lokal: berfungsi.
-- Penyimpanan ke Google Sheets: belum, direncanakan.
+- Penyimpanan ke berkas TSV lokal (dipisah tab, bisa ditempel ke Google Sheets): berfungsi.
+- Penyimpanan ke Google Sheets: opsional, baru ditulis dan masih dalam pengujian.
 - Foto struk: eksperimen terpisah (`test_struk_glm_ocr.py`), belum terhubung ke bot.
 
 ## Cara kerja
@@ -32,20 +32,22 @@ Gemma 4 (Ollama)    menerima daftar keterangan bernomor tanpa nominal,
 Tombol konfirmasi   pilih bank bila belum disebut, lalu Simpan atau Batal
       |
       v
-pengeluaran.csv
+Google Sheets (atau pengeluaran.tsv bila belum diatur)
 ```
 
 ## Contoh
 
 Pesan: `kopi 20rb cash; bensin 30rb bca kemarin` (dijalankan pada 10 Nov 2026)
 
-Hasil di `pengeluaran.csv`:
+Hasil di `pengeluaran.tsv` (kolom dipisah tab, ditampilkan di sini dengan spasi):
 
 ```
-Date,Bank,Category,Description,Amount
-2026-11-09,Cash,Jajan,Kopi,20000
-2026-11-09,BCA Atha,Transportation,Bensin,30000
+Date        Bank      Category        Description  Amount
+2026-11-09  Cash      Jajan           Kopi         20000
+2026-11-09  BCA Atha  Transportation  Bensin       30000
 ```
+
+Karena dipisah tab, baris-baris ini bisa disalin dan ditempel ke Google Sheets, dan kolomnya langsung terpecah.
 
 Kategori ditentukan model, jadi bisa meleset. Kategori yang tidak dikenal merek atau namanya bisa dikoreksi dengan menambah petunjuk di `prompt_teks.txt`.
 
@@ -92,6 +94,17 @@ python bot_expense.py
 
 Laptop harus menyala dan skrip harus berjalan supaya bot membalas. Bot memakai polling, jadi tidak butuh alamat publik. Hentikan dengan Ctrl+C.
 
+## Google Sheets (opsional)
+
+Tanpa konfigurasi, hasil ditulis ke `pengeluaran.tsv`. Untuk menulis langsung ke Google Sheets:
+
+1. Buat project di Google Cloud Console, lalu aktifkan Google Sheets API dan Google Drive API.
+2. Buat service account dan unduh key JSON-nya. Simpan sebagai `service_account.json` di folder proyek (sudah masuk `.gitignore`).
+3. Bagikan spreadsheet ke alamat `client_email` di file itu, sebagai Editor.
+4. Isi `.env`: `GOOGLE_SHEET_ID` (bagian URL di antara `/d/` dan `/edit`), `GOOGLE_SHEET_TAB` (nama tab, bawaannya `Pengeluaran`), dan `GOOGLE_SERVICE_ACCOUNT_FILE` bila nama atau lokasi filenya berbeda.
+
+Kolom yang diisi adalah A sampai E (Date, Bank, Category, Description, Amount), tepat di bawah baris terakhir kolom A. Kolom lain tidak disentuh. Nilai Bank dan Category harus sama persis dengan pilihan di spreadsheet. Kalau penulisan ke Sheets gagal, baris dialihkan ke `pengeluaran.tsv` supaya tidak hilang, dan bot memberi tahu alasannya.
+
 ## Pengujian
 
 ```
@@ -115,19 +128,18 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Semua pemrosesan berjalan di laptop sendiri, tidak ada layanan AI berbayar atau cloud.
 - Bot hanya merespons satu ID Telegram, pesan dari orang lain diabaikan.
 - Isi pesan tidak ditulis ke log.
-- `.env`, `bank_alias.json`, `pengeluaran.csv`, dan kunci layanan Google masuk `.gitignore`.
+- `.env`, `bank_alias.json`, `pengeluaran.tsv`, dan kunci layanan Google masuk `.gitignore`.
 
 ## Batasan yang diketahui
 
 - Hasil yang menunggu konfirmasi disimpan di memori. Kalau bot dijalankan ulang, pesan lama kedaluwarsa dan perlu dikirim ulang.
-- Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di CSV.
+- Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di Sheets atau berkas TSV.
 - Panggilan ke Telegram yang timeout diulang sampai 3 kali. Kalau koneksi terus gagal, hasil tidak muncul di chat dan pesan perlu dikirim ulang.
 - Satu pesan diproses satu per satu karena keterbatasan laptop.
 - Hanya satu pengguna yang didukung.
 
 ## Rencana
 
-- Penyimpanan ke Google Sheets lewat service account
 - Foto struk dengan GLM-OCR, dengan angka dibaca Python, bukan model
 - Perintah `/undo`, pencegahan duplikat, dan ringkasan harian
 - Memindahkan daftar kategori ke berkas konfigurasi
