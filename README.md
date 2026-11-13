@@ -1,6 +1,6 @@
 # expense-bot
 
-Bot Telegram untuk mencatat pengeluaran pribadi dari pesan teks singkat. Berjalan lokal di laptop biasa, gratis, dan memakai model bahasa lewat [Ollama](https://ollama.com).
+Bot Telegram untuk mencatat pengeluaran pribadi dari pesan teks singkat atau foto struk. Berjalan lokal di laptop biasa, gratis, dan memakai model bahasa lewat [Ollama](https://ollama.com).
 
 Contoh pesan: `bensin 30k, ketoprak 40k kemarin`
 
@@ -10,7 +10,7 @@ Contoh pesan: `bensin 30k, ketoprak 40k kemarin`
 - Konfirmasi lewat tombol Telegram (pilih bank, Simpan, Batal): berfungsi.
 - Penyimpanan ke berkas TSV lokal (dipisah tab, bisa ditempel ke Google Sheets): berfungsi.
 - Penyimpanan ke Google Sheets: opsional, baru ditulis dan masih dalam pengujian.
-- Foto struk: eksperimen terpisah (`test_struk_glm_ocr.py`), belum terhubung ke bot.
+- Foto struk: tersedia, parser diuji pada struk contoh dan satu format struk asli (supermarket), pengujian masih terbatas.
 
 ## Cara kerja
 
@@ -23,11 +23,12 @@ Pesan Telegram
 bot_expense.py      menerima pesan, hanya melayani ID Telegram yang diizinkan
       |
       v
-catat_teks.py       Python: baca nominal, bank, dan tanggal
-      |
+catat_teks.py       Python: baca nominal, bank, dan tanggal   (pesan teks)
+struk.py            GLM-OCR menyalin teks foto, Python membaca barang,   (foto struk)
+      |             harga, diskon, tanggal, total, lalu cek ke total
       v
 Gemma 4 (Ollama)    menerima daftar keterangan bernomor tanpa nominal,
-      |             menentukan kategori dan merapikan deskripsi
+      |             menentukan kategori (dan jenis struk untuk foto)
       v
 Tombol konfirmasi   pilih bank bila belum disebut, lalu Simpan atau Batal
       |
@@ -63,7 +64,7 @@ Kategori ditentukan model, jadi bisa meleset. Kategori yang tidak dikenal merek 
 - Windows (satu-satunya sistem yang diuji)
 - Python 3.12
 - Ollama, dikembangkan dengan versi 0.40.14
-- Model `gemma4:e4b-it-qat`
+- Model `gemma4:e4b-it-qat`, dan `glm-ocr` untuk foto struk
 - Bot Telegram dari [@BotFather](https://t.me/BotFather)
 
 ## Instalasi
@@ -77,6 +78,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ollama pull gemma4:e4b-it-qat
+ollama pull glm-ocr
 Copy-Item .env.example .env
 Copy-Item bank_alias.example.json bank_alias.json
 ```
@@ -94,6 +96,19 @@ python bot_expense.py
 
 Laptop harus menyala dan skrip harus berjalan supaya bot membalas. Bot memakai polling, jadi tidak butuh alamat publik. Hentikan dengan Ctrl+C.
 
+## Foto struk
+
+Kirim foto struk ke bot (sebagai Photo, atau sebagai File supaya Telegram tidak mengompresnya). Bank dan tanggal bisa ditulis di caption foto, misalnya `seabank atha kemarin`. Tanpa caption, bot memakai tanggal di struk, atau tanggal pesan kalau tidak ketemu, dan menampilkan tombol pilihan bank.
+
+- **Struk belanja:** satu baris per barang. Harga yang ditulis di kolom kanan struk ada yang sudah dikurangi diskon, ada yang belum, jadi bot menentukannya dari total struk. Jumlah semua baris dibandingkan dengan total: `COCOK` kalau sama (selisih di bawah Rp100 dianggap pembulatan), `PERLU DICEK` kalau berbeda, `TIDAK BISA DICEK` kalau total tidak terbaca.
+- **Struk makan:** satu baris saja, nama tempat sebagai deskripsi, total yang dibayar sebagai jumlah, kategori Dine Out.
+- **Barang tidak terbaca tapi total ketemu:** dicatat satu baris sebesar total dan diberi tanda `PERLU DICEK`.
+- Hasil tidak pernah langsung tersimpan. Tombol konfirmasi tetap ada.
+- Foto diproses di memori dan tidak ditulis ke disk. Setelah Simpan atau Batal, bot menghapus pesan foto dari chat. Kalau Telegram menolak, bot memberi tahu supaya dihapus manual.
+- Satu foto butuh beberapa menit di laptop pengembang. Selama itu pesan lain ikut antre.
+
+Parser mengenali tiga pola baris barang: berkode produk (supermarket), "nama harga" dalam satu baris, dan nama di satu baris dengan `1x harga total` di baris berikutnya (minimarket). Harga tanpa nama yang terbaca dicatat dengan deskripsi "Nama tidak terbaca". Tata letak lain, misalnya nama dan harga terpisah jauh, bisa tidak terbaca benar. Angka selalu diperiksa ke total, jadi kesalahan baca biasanya terlihat sebagai `PERLU DICEK`.
+
 ## Google Sheets (opsional)
 
 Tanpa konfigurasi, hasil ditulis ke `pengeluaran.tsv`. Untuk menulis langsung ke Google Sheets:
@@ -109,10 +124,12 @@ Kolom yang diisi adalah A sampai E (Date, Bank, Category, Description, Amount), 
 
 ```
 python catat_teks.py tes
+python struk.py tes
 python catat_teks.py "kopi 20rb seabank"
+python struk.py foto_struk.jpg
 ```
 
-Perintah pertama menjalankan 26 kasus untuk pembacaan nominal, bank, dan tanggal, tanpa memanggil model. Perintah kedua memanggil model dan mencetak hasilnya.
+Dua perintah pertama menjalankan tes parser tanpa memanggil model (26 kasus untuk pesan teks, kasus struk belanja, makan, dan struk rusak untuk foto). Dua perintah terakhir memanggil model dan mencetak hasilnya.
 
 ## Konfigurasi
 
@@ -135,18 +152,20 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Hasil yang menunggu konfirmasi disimpan di memori. Kalau bot dijalankan ulang, pesan lama kedaluwarsa dan perlu dikirim ulang.
 - Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di Sheets atau berkas TSV.
 - Panggilan ke Telegram yang timeout diulang sampai 3 kali. Kalau koneksi terus gagal, hasil tidak muncul di chat dan pesan perlu dikirim ulang.
-- Satu pesan diproses satu per satu karena keterbatasan laptop.
+- Satu pesan atau foto diproses satu per satu karena keterbatasan laptop.
+- Foto struk dihapus dari chat hanya setelah Simpan atau Batal. Kalau bot dijalankan ulang sebelum itu, atau hasil lama terbuang karena batas 50 hasil menunggu, fotonya tetap ada di chat dan perlu dihapus manual.
+- Foto yang dikirim sebagai file dengan format yang tidak dikenali model (misalnya HEIC) bisa gagal diproses.
 - Semua pengguna yang diizinkan menulis ke tempat penyimpanan yang sama, dan belum ada pencatatan siapa yang menulis.
 
 ## Rencana
 
-- Foto struk dengan GLM-OCR, dengan angka dibaca Python, bukan model
+- Menambah format struk yang dikenali parser, berdasarkan struk nyata yang gagal terbaca
 - Perintah `/undo`, pencegahan duplikat, dan ringkasan harian
 - Memindahkan daftar kategori ke berkas konfigurasi
 
 ## Eksperimen foto struk
 
-`test_struk_glm_ocr.py` mencoba alur dua tahap: GLM-OCR menyalin teks dari foto, lalu Gemma 4 mencatat. Skrip ini masih berupa percobaan: model yang membaca barang, harga, dan total, dan diskon pada struk tertentu bisa menempel ke barang yang salah. Pelajaran dari percobaan ini adalah alasan angka diserahkan ke Python di jalur teks. Skrip ini berdiri sendiri dan tidak dipakai oleh bot.
+`test_struk_glm_ocr.py` dan `test_struk.py` adalah percobaan awal: model yang membaca barang, harga, dan total langsung dari teks, dan diskon pada struk tertentu bisa menempel ke barang yang salah. Pelajaran dari percobaan itu adalah alasan angka diserahkan ke Python di `struk.py`. Kedua skrip ini berdiri sendiri dan tidak dipakai oleh bot.
 
 ## Lisensi
 
