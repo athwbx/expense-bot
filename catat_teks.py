@@ -62,13 +62,17 @@ POLA_PISAH = re.compile(r"[\n;]+|(?<!\d),|,(?!\d)")
 POLA_NOMINAL = re.compile(r"(?<![\w.,])(rp\.?\s*)?(\d+(?:[.,]\d+)*)\s*(jt|juta|rb|ribu|k)?(?!\w)", re.I)
 
 
+# Daftar kategori. Harus sama dengan dropdown Category di spreadsheet dan dengan prompt_teks.txt.
+Kategori = Literal[
+    "Home", "Home supplies", "Groceries", "Dine Out", "Jajan",
+    "Transportation", "Personal Care", "Socials", "Date/Couple",
+]
+
+
 class ItemTeks(BaseModel):
     nomor: int
     description: str
-    category: Literal[
-        "Home", "Home supplies", "Groceries", "Dine Out", "Jajan",
-        "Transportation", "Personal Care", "Socials", "Date/Couple",
-    ]
+    category: Kategori
 
 
 class HasilTeks(BaseModel):
