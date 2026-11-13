@@ -1,7 +1,8 @@
 """Bot Telegram pencatat pengeluaran.
 
-Pesan teks seperti "kopi 20rb seabank" diubah menjadi baris pengeluaran oleh
-catat_teks.py, ditampilkan dengan tombol konfirmasi, lalu disimpan ke Google Sheets, atau ke pengeluaran.tsv kalau Sheets belum diatur (lihat penyimpanan.py).
+Pesan teks seperti "kopi 20rb seabank" diubah menjadi baris pengeluaran oleh catat_teks.py, dan foto
+struk oleh struk.py. Hasilnya ditampilkan dengan tombol konfirmasi, lalu disimpan ke Google Sheets, atau ke
+pengeluaran.tsv kalau Sheets belum diatur (lihat penyimpanan.py). Foto struk dihapus dari chat setelah Simpan atau Batal.
 
 Konfigurasi lewat environment variable atau file .env (lihat .env.example):
     TELEGRAM_TOKEN    token dari BotFather (wajib)
@@ -28,6 +29,7 @@ from telegram.ext import (
 
 from catat_teks import BANK_ALIAS, proses_pesan, tampil_tanggal
 from penyimpanan import DATA_PATH, simpan_baris, tujuan_aktif
+from struk import proses_foto
 
 try:
     from dotenv import load_dotenv
@@ -116,13 +118,13 @@ async def coba_ulang(fungsi, *args, **kwargs):
             await asyncio.sleep(2 * percobaan)
 
 
-def simpan_pending(data_bot, baris, catatan, pemilik):
+def simpan_pending(data_bot, baris, catatan, pemilik, foto=None):
     """Simpan hasil di memori sampai dikonfirmasi. Hanya pemilik (pengirim pesan) yang boleh menekan tombolnya.
-    Kembalikan kunci untuk tombol."""
+    foto: (chat_id, message_id) pesan foto struk yang dihapus setelah Simpan atau Batal. Kembalikan kunci untuk tombol."""
     data_bot["n"] += 1
     kunci = str(data_bot["n"])
     pending = data_bot["pending"]
-    pending[kunci] = {"baris": baris, "catatan": catatan, "pemilik": pemilik}
+    pending[kunci] = {"baris": baris, "catatan": catatan, "pemilik": pemilik, "foto": foto}
     while len(pending) > MAKS_PENDING:  # dict menjaga urutan masuk, jadi yang pertama paling lama
         pending.pop(next(iter(pending)))
     return kunci
@@ -177,8 +179,54 @@ async def terima_teks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def hapus_foto(bot, data):
+    """Hapus pesan foto struk dari chat. True kalau berhasil atau tidak ada foto yang perlu dihapus."""
+    foto = data.get("foto")
+    if not foto:
+        return True
+    try:
+        await bot.delete_message(chat_id=foto[0], message_id=foto[1])
+        return True
+    except Exception as e:  # Telegram bisa menolak, misalnya pesan lebih dari 48 jam
+        log.warning("foto struk tidak bisa dihapus otomatis: %s", e)
+        return False
+
+
 async def terima_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Foto struk belum didukung. Saat ini hanya pesan teks.")
+    pesan = update.message
+    data_bot = context.application.bot_data
+    berkas = pesan.photo[-1] if pesan.photo else pesan.document  # foto terbesar, atau gambar yang dikirim sebagai file
+    antre = data_bot["lock"].locked()
+    status = await pesan.reply_text(
+        ("Antre, menunggu proses sebelumnya. " if antre else "") + "Membaca struk, bisa beberapa menit..."
+    )
+    try:
+        file = await berkas.get_file()
+        data = bytes(await file.download_as_bytearray())  # di memori saja, foto tidak ditulis ke disk
+    except Exception as e:
+        log.exception("gagal mengunduh foto")
+        await coba_ulang(status.edit_text, f"Gagal mengunduh foto ({type(e).__name__}). Coba kirim ulang.")
+        return
+    tanggal_pesan = pesan.date.astimezone(WIB).date()
+    try:
+        async with data_bot["lock"]:
+            baris, catatan = await asyncio.to_thread(proses_foto, data, tanggal_pesan, pesan.caption or "")
+    except Exception as e:
+        log.exception("gagal memproses foto")
+        await coba_ulang(
+            status.edit_text,
+            f"Gagal memproses foto ({type(e).__name__}). Pastikan Ollama berjalan dan model glm-ocr sudah terpasang, "
+            "atau lihat log di terminal.",
+        )
+        return
+    if not baris:
+        await coba_ulang(status.edit_text, "\n".join(catatan) + "\nFoto tidak dihapus otomatis.")
+        return
+    log.info("foto diproses: %d baris", len(baris))
+    kunci = simpan_pending(data_bot, baris, catatan, pesan.from_user.id, foto=(pesan.chat_id, pesan.message_id))
+    await coba_ulang(
+        status.edit_text, format_hasil(baris, catatan), reply_markup=buat_keyboard(kunci, baris)
+    )
 
 
 async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,10 +287,15 @@ async def tombol(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         teks = f"Tersimpan {len(data['baris'])} baris ke {tujuan}.\n"
         if peringatan:
             teks += f"Peringatan: {peringatan}\n"
+        if not await hapus_foto(context.bot, data):
+            teks += "Foto struk belum bisa dihapus otomatis, hapus manual dari chat.\n"
         await coba_ulang(query.edit_message_text, teks + format_hasil(data["baris"], []))
     elif aksi == "X":
         pending.pop(kunci, None)
-        await coba_ulang(query.edit_message_text, "Dibatalkan, tidak ada yang disimpan.")
+        teks = "Dibatalkan, tidak ada yang disimpan."
+        if not await hapus_foto(context.bot, data):
+            teks += " Foto struk belum bisa dihapus otomatis, hapus manual dari chat."
+        await coba_ulang(query.edit_message_text, teks)
 
 
 async def tangani_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -287,7 +340,7 @@ def main() -> None:
         # UpdateType.MESSAGE: pesan yang diedit tidak diproses ulang
         hanya_aku = filters.User(user_id=boleh) & filters.UpdateType.MESSAGE  # semua ID yang diizinkan
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & hanya_aku, terima_teks))
-        app.add_handler(MessageHandler(filters.PHOTO & hanya_aku, terima_foto))
+        app.add_handler(MessageHandler((filters.PHOTO | filters.Document.IMAGE) & hanya_aku, terima_foto))
         app.add_handler(CallbackQueryHandler(tombol))
     log.info("Penyimpanan: %s", tujuan_aktif())
     log.info("Bot berjalan. Hentikan dengan Ctrl+C.")
