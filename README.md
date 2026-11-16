@@ -7,7 +7,7 @@ Contoh pesan: `bensin 30k, ketoprak 40k kemarin`
 ## Status
 
 - Pesan teks ke baris pengeluaran: berfungsi, diuji di Windows.
-- Konfirmasi lewat tombol Telegram (pilih bank, Simpan, Batal): berfungsi.
+- Konfirmasi lewat tombol Telegram (pilih bank, Edit, Simpan, Batal): berfungsi.
 - Penyimpanan ke berkas TSV lokal (dipisah tab, bisa ditempel ke Google Sheets): berfungsi.
 - Penyimpanan ke Google Sheets: opsional, baru ditulis dan masih dalam pengujian.
 - Foto struk: tersedia, parser diuji pada struk contoh dan satu format struk asli (supermarket), pengujian masih terbatas.
@@ -96,6 +96,16 @@ python bot_expense.py
 
 Laptop harus menyala dan skrip harus berjalan supaya bot membalas. Bot memakai polling, jadi tidak butuh alamat publik. Hentikan dengan Ctrl+C.
 
+## Edit sebelum menyimpan
+
+Di pesan hasil ada tombol **Edit**. Pilih baris (kalau lebih dari satu), lalu bagian yang mau diubah:
+
+- **Bank** dan **Kategori**: pilih dari tombol.
+- **Tanggal**, **Deskripsi**, dan **Jumlah**: bot meminta nilai baru, ketik saja di chat. Contoh jumlah `71k` atau `71.000`, contoh tanggal `kemarin`, `6 agustus`, atau `6/8`. Pesan ketikan itu dihapus bot setelah diterapkan, kalau Telegram mengizinkan.
+- **Hapus baris**: membuang satu baris yang salah baca. Baris terakhir tidak bisa dihapus, pakai Batal.
+
+Menekan tombol apa pun (misalnya Kembali atau Simpan) membatalkan edit yang masih menunggu ketikan. Setelah diedit, status `COCOK` atau `PERLU DICEK` pada struk foto dibuang karena dihitung sebelum edit, dan diganti catatan "Sudah diedit manual."
+
 ## Foto struk
 
 Kirim foto struk ke bot (sebagai Photo, atau sebagai File supaya Telegram tidak mengompresnya). Bank dan tanggal bisa ditulis di caption foto, misalnya `seabank atha kemarin`. Tanpa caption, bot memakai tanggal di struk, atau tanggal pesan kalau tidak ketemu, dan menampilkan tombol pilihan bank.
@@ -149,8 +159,7 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 
 ## Batasan yang diketahui
 
-- Hasil yang menunggu konfirmasi disimpan di memori. Kalau bot dijalankan ulang, pesan lama kedaluwarsa dan perlu dikirim ulang.
-- Belum ada tombol untuk mengganti kategori, koreksi dilakukan manual di Sheets atau berkas TSV.
+- Hasil yang menunggu konfirmasi disimpan di memori. Selama mengedit tanggal, deskripsi, atau jumlah, pesan teks berikutnya dari orang yang sama dibaca sebagai nilai baru, bukan pengeluaran baru. Kalau bot dijalankan ulang, pesan lama kedaluwarsa dan perlu dikirim ulang.
 - Panggilan ke Telegram yang timeout diulang sampai 3 kali. Kalau koneksi terus gagal, hasil tidak muncul di chat dan pesan perlu dikirim ulang.
 - Satu pesan atau foto diproses satu per satu karena keterbatasan laptop.
 - Foto struk dihapus dari chat hanya setelah Simpan atau Batal. Kalau bot dijalankan ulang sebelum itu, atau hasil lama terbuang karena batas 50 hasil menunggu, fotonya tetap ada di chat dan perlu dihapus manual.
