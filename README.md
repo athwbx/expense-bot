@@ -40,7 +40,7 @@ Google Sheets (atau pengeluaran.tsv bila belum diatur)
 
 Pesan: `kopi 20rb cash; bensin 30rb bca kemarin` (dijalankan pada 10 Nov 2026)
 
-Hasil di `pengeluaran.tsv` (kolom dipisah tab, ditampilkan di sini dengan spasi):
+Hasil di `pengeluaran.tsv` (kolom dipisah tab, ditampilkan di sini dengan spasi, format kosongnya ada di `pengeluaran.example.tsv`):
 
 ```
 Date        Bank      Category        Description  Amount
@@ -172,9 +172,9 @@ Diukur sekali di laptop pengembang (Intel i5-10500H, RAM 24 GB, GTX 1650 Max-Q 4
 - Perintah `/undo`, pencegahan duplikat, dan ringkasan harian
 - Memindahkan daftar kategori ke berkas konfigurasi
 
-## Eksperimen foto struk
+## Catatan perancangan
 
-`test_struk_glm_ocr.py` dan `test_struk.py` adalah percobaan awal: model yang membaca barang, harga, dan total langsung dari teks, dan diskon pada struk tertentu bisa menempel ke barang yang salah. Pelajaran dari percobaan itu adalah alasan angka diserahkan ke Python di `struk.py`. Kedua skrip ini berdiri sendiri dan tidak dipakai oleh bot.
+Percobaan awal membiarkan model membaca barang, harga, dan total langsung dari teks OCR. Hasilnya menunjukkan model kecil lemah di angka: diskon bisa menempel ke barang yang salah. Karena itu semua angka kini dibaca Python dengan aturan pasti dan dicek ke total, sedangkan model hanya menilai jenis struk, nama tempat, dan kategori. Skrip percobaan awal itu ada di riwayat commit.
 
 ## Lisensi
 
